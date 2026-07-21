@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="es-CL">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mis Gastos</title>
+<meta name="description" content="Registro de gastos personales">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#f5f1e8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1c1b18" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Mis Gastos">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="icon-192.png">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<style>
+  :root {
+    --paper: #fdfbf5;
+    --bg: #e8e2d4;
+    --ink: #2b2a26;
+    --ink-soft: #6b6759;
+    --line: #b8b2a2;
+    --accent: #1a7a4a;
+    --danger: #b03a2e;
+    --tag-bg: #fff3c4;
+    --tag-ink: #7a5c00;
+    --input-bg: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #262420;
+      --bg: #161512;
+      --ink: #e8e4d8;
+      --ink-soft: #a09a88;
+      --line: #4a463c;
+      --accent: #4fc98a;
+      --danger: #e8756a;
+      --tag-bg: #4a3f10;
+      --tag-ink: #f0d878;
+      --input-bg: #1d1c18;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: ui-monospace, 'Cascadia Mono', 'Courier New', monospace;
+    background: var(--bg);
+    color: var(--ink);
+    padding: 14px 8px calc(30px + env(safe-area-inset-bottom));
+    max-width: 560px;
+    margin: 0 auto;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  .receipt {
+    background: var(--paper);
+    box-shadow: 0 2px 10px rgba(0,0,0,.15);
+    padding: 0 16px;
+  }
+  .edge { height: 12px; margin: 0 -16px; background-repeat: repeat-x; background-size: 18px 12px; }
+  .edge-top    { background-image: radial-gradient(circle at 9px -3px, var(--bg) 7px, var(--paper) 8px); }
+  .edge-bottom { background-image: radial-gradient(circle at 9px 15px, var(--bg) 7px, var(--paper) 8px); }
+  header { text-align: center; padding: 14px 0 8px; }
+  header h1 { font-size: 20px; letter-spacing: 4px; font-weight: 700; }
+  header .sub { color: var(--ink-soft); font-size: 11px; letter-spacing: 1px; margin-top: 2px; }
+  .dashed { border: none; border-top: 2px dashed var(--line); margin: 12px 0; }
+  .sync-pill {
+    display: inline-block; font-size: 11px; color: var(--ink-soft);
+    margin-top: 6px; letter-spacing: .5px;
+  }
+  .sync-pill.ok::before   { content: "● "; color: var(--accent); }
+  .sync-pill.warn::before { content: "● "; color: #d4a017; }
+  .sync-pill.off::before  { content: "● "; color: var(--ink-soft); }
+
+  form label { display: block; font-size: 11px; color: var(--ink-soft); letter-spacing: 1px; text-transform: uppercase; margin: 10px 0 3px; }
+  input[type=number], input[type=text], input[type=date], input[type=password], select {
+    width: 100%; padding: 9px 10px; font: inherit; color: var(--ink);
+    background: var(--input-bg); border: 1.5px solid var(--line); border-radius: 4px;
+    -webkit-appearance: none; appearance: none;
+  }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  select { background-image: linear-gradient(45deg, transparent 50%, var(--ink-soft) 50%), linear-gradient(135deg, var(--ink-soft) 50%, transparent 50%); background-position: calc(100% - 16px) 50%, calc(100% - 11px) 50%; background-size: 5px 5px; background-repeat: no-repeat; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .check-row { display: flex; align-items: center; gap: 8px; margin: 12px 0 2px; }
+  .check-row input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--accent); }
+  .check-row span { font-size: 13px; }
+  button.primary {
+    width: 100%; margin-top: 14px; padding: 12px; font: inherit; font-weight: 700;
+    letter-spacing: 2px; background: var(--accent); color: #fff; border: none;
+    border-radius: 4px; cursor: pointer;
+  }
+  button.primary:active { opacity: .85; }
+
+  .filters { display: flex; gap: 8px; margin: 4px 0 10px; }
+  .filters button {
+    flex: 1; padding: 8px; font: inherit; font-size: 12px; letter-spacing: 1px;
+    background: transparent; color: var(--ink-soft); border: 1.5px solid var(--line);
+    border-radius: 4px; cursor: pointer;
+  }
+  .filters button.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+
+  .totals { text-align: center; padding: 4px 0; }
+  .totals .big { font-size: 26px; font-weight: 700; letter-spacing: 1px; }
+  .totals .items { color: var(--ink-soft); font-size: 12px; }
+  .totals .shared { font-size: 12px; margin-top: 6px; color: var(--ink-soft); }
+  .totals .shared b { color: var(--ink); }
+
+  #lista { list-style: none; }
+  #lista li {
+    display: flex; align-items: baseline; gap: 8px;
+    padding: 8px 0; border-bottom: 1px dashed var(--line);
+  }
+  #lista li .fecha { font-size: 11px; color: var(--ink-soft); white-space: nowrap; }
+  #lista li .desc { flex: 1; min-width: 0; }
+  #lista li .desc .cat { font-weight: 700; }
+  #lista li .desc .det { font-size: 12px; color: var(--ink-soft); overflow-wrap: anywhere; }
+  #lista li .monto { white-space: nowrap; font-weight: 700; }
+  .tag-simon {
+    display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .5px;
+    background: var(--tag-bg); color: var(--tag-ink); border-radius: 3px;
+    padding: 1px 5px; vertical-align: 1px;
+  }
+  #lista li .del {
+    background: none; border: none; color: var(--danger); font: inherit;
+    font-size: 16px; cursor: pointer; padding: 2px 6px; line-height: 1;
+  }
+  #lista li .del.confirm {
+    font-size: 11px; font-weight: 700; background: var(--danger); color: #fff;
+    border-radius: 3px; padding: 4px 6px;
+  }
+  .empty { text-align: center; color: var(--ink-soft); padding: 18px 0; font-size: 12px; }
+
+  h2.section { font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--ink-soft); text-align: center; margin-bottom: 8px; }
+  .chart-box { position: relative; width: 100%; }
+  #chartTorta { max-height: 230px; }
+  #chartBarras { max-height: 200px; }
+  #leyenda { margin-top: 10px; font-size: 12px; }
+  #leyenda .lrow { display: flex; align-items: center; gap: 7px; padding: 2px 0; }
+  #leyenda .dot { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+  #leyenda .lname { flex: 1; }
+  #leyenda .lpct { color: var(--ink-soft); }
+
+  .backup { display: flex; gap: 8px; margin: 6px 0 14px; }
+  .backup button {
+    flex: 1; padding: 8px; font: inherit; font-size: 12px; background: transparent;
+    color: var(--ink-soft); border: 1.5px dashed var(--line); border-radius: 4px; cursor: pointer;
+  }
+  footer { text-align: center; font-size: 10px; color: var(--ink-soft); letter-spacing: 1px; padding: 10px 0 14px; }
+
+  /* Pantalla de bloqueo */
+  #lock {
+    position: fixed; inset: 0; background: var(--bg); z-index: 50;
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  #lock .receipt { max-width: 340px; width: 100%; padding-bottom: 4px; }
+  #lock .inner { padding: 10px 4px 16px; text-align: center; }
+  #lock h1 { font-size: 18px; letter-spacing: 3px; margin-bottom: 4px; }
+  #lock p { font-size: 12px; color: var(--ink-soft); margin-bottom: 12px; }
+  #lockError { color: var(--danger); font-size: 12px; margin-top: 8px; min-height: 16px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div id="lock" class="hidden">
+  <div class="receipt">
+    <div class="edge edge-top"></div>
+    <div class="inner">
+      <h1>MIS GASTOS</h1>
+      <p>Ingresa tu clave personal</p>
+      <form id="lockForm">
+        <input type="password" id="clave" autocomplete="current-password" placeholder="Clave" required>
+        <button class="primary" type="submit">ENTRAR</button>
+      </form>
+      <div id="lockError"></div>
+    </div>
+    <div class="edge edge-bottom"></div>
+  </div>
+</div>
+
+<div class="receipt" id="app">
+  <div class="edge edge-top"></div>
+
+  <header>
+    <h1>MIS GASTOS</h1>
+    <div class="sub">* * * registro personal * * *</div>
+    <span id="syncPill" class="sync-pill off">modo local</span>
+  </header>
+
+  <hr class="dashed">
+
+  <form id="formGasto" autocomplete="off">
+    <div class="row2">
+      <div>
+        <label for="monto">Monto (CLP)</label>
+        <input type="number" id="monto" inputmode="numeric" min="1" step="1" placeholder="30000" required>
+      </div>
+      <div>
+        <label for="fecha">Fecha</label>
+        <input type="date" id="fecha" required>
+      </div>
+    </div>
+    <label for="categoria">Categoría</label>
+    <select id="categoria" required></select>
+    <label for="detalle">Detalle (opcional)</label>
+    <input type="text" id="detalle" maxlength="120" placeholder="ej: cuenta de la luz">
+    <div class="check-row">
+      <input type="checkbox" id="compartido">
+      <span>Compartido con Simon</span>
+    </div>
+    <button class="primary" type="submit">AGREGAR GASTO</button>
+  </form>
+
+  <hr class="dashed">
+
+  <div class="filters">
+    <button type="button" data-periodo="mes" class="active">ESTE MES</button>
+    <button type="button" data-periodo="todo">TODO</button>
+  </div>
+
+  <div class="totals">
+    <div class="big" id="totalGeneral">$0</div>
+    <div class="items" id="totalItems">0 artículos</div>
+    <div class="shared" id="totalCompartido"></div>
+  </div>
+
+  <hr class="dashed">
+
+  <ul id="lista"></ul>
+  <div class="empty hidden" id="emptyMsg">— sin gastos en este período —</div>
+
+  <hr class="dashed">
+
+  <h2 class="section">Por categoría</h2>
+  <div class="chart-box"><canvas id="chartTorta"></canvas></div>
+  <div id="leyenda"></div>
+
+  <hr class="dashed">
+
+  <h2 class="section" id="tituloBarras">Gasto por día</h2>
+  <div class="chart-box"><canvas id="chartBarras"></canvas></div>
+
+  <hr class="dashed">
+
+  <div class="backup">
+    <button type="button" id="btnExportar">⬇ Exportar</button>
+    <button type="button" id="btnImportar">⬆ Importar</button>
+    <input type="file" id="fileImport" accept=".json,application/json" class="hidden">
+  </div>
+
+  <footer>*** gracias por su preferencia ***</footer>
+  <div class="edge edge-bottom"></div>
+</div>
+
+<script>
+/* ============================================================
+   CONFIGURACIÓN DE SUPABASE
+   Pega aquí tus credenciales (Project Settings → API):
+   - SUPABASE_URL: la "Project URL"
+   - SUPABASE_ANON_KEY: la clave "anon public"
+   - SUPABASE_EMAIL: el email del usuario que creaste en
+     Authentication → Users (la clave de la app es su contraseña)
+   Si se dejan vacíos, la app funciona en modo local (sin sincronización).
+   ============================================================ */
+const SUPABASE_URL = "";
+const SUPABASE_ANON_KEY = "";
+const SUPABASE_EMAIL = "";
+
+const CATEGORIAS = ["Arriendo","Gastos comunes","Cuentas depto","Comida","Salidas a comer","Snacks","Transporte","Servicios","Entretención","Compras","Salud","Otros"];
+const COLORES = ["#c0392b","#d4820a","#b7a112","#1a7a4a","#16948c","#2471a3","#5b4ea3","#8e44ad","#c2447e","#7f8c8d","#8a6d3b","#5d6d7e"];
+
+const LS_DATA = "mg_gastos_v1";
+const LS_PENDING = "mg_pending_v1";
+
+const $ = (id) => document.getElementById(id);
+const fmtCLP = (n) => new Intl.NumberFormat("es-CL", { style: "currency", currency: "CLP", maximumFractionDigits: 0 }).format(n);
+const hoyISO = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+};
+const uuid = () => (crypto.randomUUID ? crypto.randomUUID() :
+  "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
+    const r = Math.random()*16|0; return (c === "x" ? r : (r&0x3|0x8)).toString(16);
+  }));
+
+let gastos = [];          // [{id, fecha, categoria, detalle, monto, compartido}]
+let periodo = "mes";      // "mes" | "todo"
+let chartTorta = null, chartBarras = null;
+let supa = null;          // cliente supabase (null = modo local)
+
+const cloudOn = SUPABASE_URL && SUPABASE_ANON_KEY && SUPABASE_EMAIL;
+
+/* ---------- localStorage ---------- */
+function loadLocal() {
+  try { gastos = JSON.parse(localStorage.getItem(LS_DATA)) || []; } catch { gastos = []; }
+}
+function saveLocal() { localStorage.setItem(LS_DATA, JSON.stringify(gastos)); }
+function getPending() {
+  try { return JSON.parse(localStorage.getItem(LS_PENDING)) || []; } catch { return []; }
+}
+function setPending(q) { localStorage.setItem(LS_PENDING, JSON.stringify(q)); }
+function enqueue(op) { const q = getPending(); q.push(op); setPending(q); updatePill(); }
+
+/* ---------- estado de sincronización ---------- */
+function updatePill(state) {
+  const pill = $("syncPill");
+  if (!cloudOn) { pill.className = "sync-pill off"; pill.textContent = "modo local"; return; }
+  const pend = getPending().length;
+  if (state === "syncing") { pill.className = "sync-pill warn"; pill.textContent = "sincronizando…"; return; }
+  if (!navigator.onLine || pend > 0) {
+    pill.className = "sync-pill warn";
+    pill.textContent = pend > 0 ? `sin conexión · ${pend} pendiente${pend>1?"s":""}` : "sin conexión";
+  } else {
+    pill.className = "sync-pill ok"; pill.textContent = "sincronizado";
+  }
+}
+
+/* ---------- backend (Supabase) ---------- */
+async function cloudInsert(g) {
+  const { error } = await supa.from("gastos").upsert({
+    id: g.id, fecha: g.fecha, categoria: g.categoria,
+    detalle: g.detalle || null, monto: g.monto, compartido: g.compartido
+  });
+  if (error) throw error;
+}
+async function cloudDelete(id) {
+  const { error } = await supa.from("gastos").delete().eq("id", id);
+  if (error) throw error;
+}
+async function flushPending() {
+  let q = getPending();
+  while (q.length) {
+    const op = q[0];
+    try {
+      if (op.t === "add") await cloudInsert(op.g);
+      else if (op.t === "del") await cloudDelete(op.id);
+      q.shift(); setPending(q);
+    } catch { break; }
+  }
+}
+async function syncFromCloud() {
+  if (!supa) return;
+  updatePill("syncing");
+  try {
+    await flushPending();
+    const { data, error } = await supa.from("gastos")
+      .select("id,fecha,categoria,detalle,monto,compartido")
+      .order("fecha", { ascending: false });
+    if (error) throw error;
+    gastos = data.map(r => ({ ...r, detalle: r.detalle || "", monto: Number(r.monto) }));
+    saveLocal();
+    render();
+  } catch (e) {
+    console.warn("Sync falló:", e.message || e);
+  }
+  updatePill();
+}
+
+/* ---------- login ---------- */
+async function initCloud() {
+  if (!cloudOn) return;
+  supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const { data: { session } } = await supa.auth.getSession();
+  if (session) { await syncFromCloud(); return; }
+  $("lock").classList.remove("hidden");
+  $("clave").focus();
+}
+$("lockForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("lockError").textContent = "";
+  const pass = $("clave").value;
+  const { error } = await supa.auth.signInWithPassword({ email: SUPABASE_EMAIL, password: pass });
+  if (error) { $("lockError").textContent = "Clave incorrecta, intenta de nuevo."; return; }
+  $("lock").classList.add("hidden");
+  await syncFromCloud();
+});
+
+/* ---------- helpers de período ---------- */
+function filtrados() {
+  if (periodo === "todo") return gastos.slice();
+  const pref = hoyISO().slice(0, 7);
+  return gastos.filter(g => g.fecha.startsWith(pref));
+}
+
+/* ---------- render ---------- */
+function render() {
+  const list = filtrados().sort((a, b) => b.fecha.localeCompare(a.fecha));
+  // totales
+  const total = list.reduce((s, g) => s + g.monto, 0);
+  const compartido = list.filter(g => g.compartido).reduce((s, g) => s + g.monto, 0);
+  $("totalGeneral").textContent = fmtCLP(total);
+  $("totalItems").textContent = `${list.length} artículo${list.length === 1 ? "" : "s"}`;
+  $("totalCompartido").innerHTML = compartido > 0
+    ? `de eso, <b>${fmtCLP(compartido)}</b> compartido con Simon (pagado por ti)` : "";
+
+  // lista estilo boleta
+  const ul = $("lista");
+  ul.innerHTML = "";
+  $("emptyMsg").classList.toggle("hidden", list.length > 0);
+  for (const g of list) {
+    const li = document.createElement("li");
+    li.dataset.id = g.id;
+    const [y, m, d] = g.fecha.split("-");
+    const det = [g.detalle, g.compartido ? `<span class="tag-simon">Simon</span>` : ""]
+      .filter(Boolean).join(" ");
+    li.innerHTML =
+      `<span class="fecha">${d}/${m}</span>` +
+      `<span class="desc"><span class="cat">${g.categoria}</span>` +
+      (det ? `<div class="det">${escapeHTML(g.detalle)}${g.compartido ? ' <span class="tag-simon">Simon</span>' : ""}</div>` : "") +
+      `</span>` +
+      `<span class="monto">${fmtCLP(g.monto)}</span>` +
+      `<button type="button" class="del" aria-label="Eliminar">✕</button>`;
+    ul.appendChild(li);
+  }
+  renderTorta(list);
+  renderBarras(list);
+}
+
+function escapeHTML(s) {
+  return String(s || "").replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function renderTorta(list) {
+  const porCat = {};
+  for (const g of list) porCat[g.categoria] = (porCat[g.categoria] || 0) + g.monto;
+  const entries = Object.entries(porCat).sort((a, b) => b[1] - a[1]);
+  const total = entries.reduce((s, e) => s + e[1], 0);
+
+  const leyenda = $("leyenda");
+  leyenda.innerHTML = "";
+  const canvas = $("chartTorta");
+  if (chartTorta) { chartTorta.destroy(); chartTorta = null; }
+  if (!entries.length) { canvas.style.display = "none"; leyenda.innerHTML = '<div class="empty">— sin datos —</div>'; return; }
+  canvas.style.display = "";
+
+  const colores = entries.map(([cat]) => COLORES[CATEGORIAS.indexOf(cat)] || "#999");
+  chartTorta = new Chart(canvas, {
+    type: "doughnut",
+    data: {
+      labels: entries.map(e => e[0]),
+      datasets: [{ data: entries.map(e => e[1]), backgroundColor: colores, borderWidth: 0 }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: "62%",
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => ` ${fmtCLP(ctx.parsed)}` } }
+      }
+    }
+  });
+  canvas.parentElement.style.height = "230px";
+
+  for (const [cat, val] of entries) {
+    const pct = (val / total * 100).toFixed(1).replace(".", ",");
+    const row = document.createElement("div");
+    row.className = "lrow";
+    row.innerHTML = `<span class="dot" style="background:${COLORES[CATEGORIAS.indexOf(cat)] || "#999"}"></span>` +
+      `<span class="lname">${cat}</span><span class="lpct">${pct}% · ${fmtCLP(val)}</span>`;
+    leyenda.appendChild(row);
+  }
+}
+
+function renderBarras(list) {
+  const canvas = $("chartBarras");
+  if (chartBarras) { chartBarras.destroy(); chartBarras = null; }
+  let labels = [], data = [];
+
+  if (periodo === "mes") {
+    $("tituloBarras").textContent = "Gasto por día";
+    const hoy = new Date();
+    const dias = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0).getDate();
+    const pref = hoyISO().slice(0, 7);
+    const porDia = new Array(dias + 1).fill(0);
+    for (const g of list) if (g.fecha.startsWith(pref)) porDia[Number(g.fecha.slice(8, 10))] += g.monto;
+    for (let d = 1; d <= dias; d++) { labels.push(String(d)); data.push(porDia[d]); }
+  } else {
+    $("tituloBarras").textContent = "Gasto por mes";
+    const porMes = {};
+    for (const g of list) { const k = g.fecha.slice(0, 7); porMes[k] = (porMes[k] || 0) + g.monto; }
+    const keys = Object.keys(porMes).sort();
+    const MES = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
+    labels = keys.map(k => `${MES[Number(k.slice(5, 7)) - 1]} ${k.slice(0, 4)}`);
+    data = keys.map(k => porMes[k]);
+  }
+
+  const css = getComputedStyle(document.documentElement);
+  const inkSoft = css.getPropertyValue("--ink-soft").trim();
+  const line = css.getPropertyValue("--line").trim();
+
+  chartBarras = new Chart(canvas, {
+    type: "bar",
+    data: { labels, datasets: [{ data, backgroundColor: css.getPropertyValue("--accent").trim(), borderRadius: 2 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => ` ${fmtCLP(ctx.parsed.y)}` } }
+      },
+      scales: {
+        x: { ticks: { color: inkSoft, font: { size: 10 }, maxRotation: 0, autoSkip: true }, grid: { display: false } },
+        y: { ticks: { color: inkSoft, font: { size: 10 }, callback: v => "$" + (v >= 1000 ? (v / 1000) + "k" : v) }, grid: { color: line }, beginAtZero: true }
+      }
+    }
+  });
+  canvas.parentElement.style.height = "200px";
+}
+
+/* ---------- acciones ---------- */
+$("formGasto").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const monto = Math.round(Number($("monto").value));
+  if (!monto || monto <= 0 || !Number.isFinite(monto)) {
+    $("monto").focus(); return;
+  }
+  const g = {
+    id: uuid(),
+    fecha: $("fecha").value || hoyISO(),
+    categoria: $("categoria").value,
+    detalle: $("detalle").value.trim(),
+    monto,
+    compartido: $("compartido").checked
+  };
+  gastos.unshift(g);
+  saveLocal();
+  render();
+  // limpiar formulario
+  $("monto").value = ""; $("detalle").value = ""; $("compartido").checked = false;
+  $("fecha").value = hoyISO(); $("categoria").selectedIndex = 0;
+  $("monto").focus();
+  if (supa) cloudInsert(g).then(updatePill).catch(() => enqueue({ t: "add", g }));
+});
+
+/* eliminar: delegación de eventos sobre la lista, confirmación en dos toques */
+function resetDelButtons() {
+  document.querySelectorAll("#lista .del.confirm").forEach(b => {
+    b.classList.remove("confirm"); b.textContent = "✕";
+    clearTimeout(Number(b.dataset.t));
+  });
+}
+$("lista").addEventListener("click", (e) => {
+  const btn = e.target.closest(".del");
+  if (!btn) { resetDelButtons(); return; }
+  const li = btn.closest("li");
+  const id = li && li.dataset.id;
+  if (!id) return;
+  if (!btn.classList.contains("confirm")) {
+    resetDelButtons();
+    btn.classList.add("confirm");
+    btn.textContent = "OK?";
+    btn.dataset.t = setTimeout(resetDelButtons, 3000);
+    return;
+  }
+  clearTimeout(Number(btn.dataset.t));
+  gastos = gastos.filter(g => g.id !== id);
+  saveLocal();
+  render();
+  if (supa) cloudDelete(id).then(updatePill).catch(() => enqueue({ t: "del", id }));
+});
+
+/* filtros */
+document.querySelectorAll(".filters button").forEach(b => {
+  b.addEventListener("click", () => {
+    periodo = b.dataset.periodo;
+    document.querySelectorAll(".filters button").forEach(x => x.classList.toggle("active", x === b));
+    render();
+  });
+});
+
+/* exportar / importar */
+$("btnExportar").addEventListener("click", () => {
+  const blob = new Blob([JSON.stringify(gastos, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `mis-gastos-${hoyISO()}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+$("btnImportar").addEventListener("click", () => $("fileImport").click());
+$("fileImport").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  try {
+    const arr = JSON.parse(await file.text());
+    if (!Array.isArray(arr)) throw new Error("formato inválido");
+    const ids = new Set(gastos.map(g => g.id));
+    let nuevos = 0;
+    for (const r of arr) {
+      if (!r || !r.fecha || !r.categoria || !(Number(r.monto) > 0)) continue;
+      const g = {
+        id: r.id && !ids.has(r.id) ? r.id : (ids.has(r.id) ? null : uuid()),
+        fecha: String(r.fecha).slice(0, 10),
+        categoria: CATEGORIAS.includes(r.categoria) ? r.categoria : "Otros",
+        detalle: String(r.detalle || "").slice(0, 120),
+        monto: Math.round(Number(r.monto)),
+        compartido: !!r.compartido
+      };
+      if (!g.id) continue; // ya existe
+      if (!r.id) g.id = uuid();
+      ids.add(g.id);
+      gastos.push(g);
+      nuevos++;
+      if (supa) cloudInsert(g).catch(() => enqueue({ t: "add", g }));
+    }
+    saveLocal();
+    render();
+    alert(`Importados ${nuevos} gasto${nuevos === 1 ? "" : "s"}.`);
+  } catch {
+    alert("No se pudo leer el archivo. Debe ser un JSON exportado por esta app.");
+  }
+});
+
+/* reconexión */
+window.addEventListener("online", () => { if (supa) syncFromCloud(); else updatePill(); });
+window.addEventListener("offline", () => updatePill());
+
+/* ---------- init ---------- */
+(function init() {
+  const sel = $("categoria");
+  for (const c of CATEGORIAS) {
+    const o = document.createElement("option");
+    o.value = o.textContent = c;
+    sel.appendChild(o);
+  }
+  $("fecha").value = hoyISO();
+  loadLocal();
+  render();
+  updatePill();
+  initCloud();
+})();
+</script>
+</body>
+</html>
