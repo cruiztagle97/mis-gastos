@@ -3,7 +3,7 @@
 App web simple de registro de gastos personales, en español (Chile) y pesos chilenos.
 Un solo `index.html` sin build ni frameworks, con Chart.js y Supabase desde CDN.
 
-**App:** https://TU-USUARIO.github.io/mis-gastos/
+**App:** https://cruiztagle97.github.io/mis-gastos/
 
 ## Características
 
