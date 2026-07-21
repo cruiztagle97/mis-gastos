@@ -129,18 +129,20 @@
     background: var(--tag-bg); color: var(--tag-ink); border-radius: 3px;
     padding: 1px 5px; vertical-align: 1px;
   }
-  #lista li .del {
+  #lista li .del, #leyenda .drow .del {
     background: none; border: none; color: var(--danger); font: inherit;
     font-size: 16px; cursor: pointer; padding: 2px 6px; line-height: 1;
   }
-  #lista li .del.confirm {
+  #lista li .del.confirm, #leyenda .drow .del.confirm {
     font-size: 11px; font-weight: 700; background: var(--danger); color: #fff;
     border-radius: 3px; padding: 4px 6px;
   }
-  #lista li .edit {
+  #lista li .edit, #leyenda .drow .edit {
     background: none; border: none; color: var(--ink-soft); font: inherit;
     font-size: 15px; cursor: pointer; padding: 2px 4px; line-height: 1;
   }
+  #leyenda .drow .del { font-size: 13px; padding: 1px 4px; }
+  #leyenda .drow .edit { font-size: 13px; padding: 1px 3px; }
   #lista li.editing { background: var(--tag-bg); }
   .empty { text-align: center; color: var(--ink-soft); padding: 18px 0; font-size: 12px; }
 
@@ -250,11 +252,6 @@
 
   <hr class="dashed">
 
-  <ul id="lista"></ul>
-  <div class="empty hidden" id="emptyMsg">— sin gastos en este período —</div>
-
-  <hr class="dashed">
-
   <h2 class="section">Por categoría</h2>
   <div class="hint">· toca una categoría para ver su detalle ·</div>
   <div class="chart-box"><canvas id="chartTorta"></canvas></div>
@@ -264,6 +261,12 @@
 
   <h2 class="section" id="tituloBarras">Gasto por día</h2>
   <div class="chart-box"><canvas id="chartBarras"></canvas></div>
+
+  <hr class="dashed">
+
+  <h2 class="section">Todos los gastos</h2>
+  <ul id="lista"></ul>
+  <div class="empty hidden" id="emptyMsg">— sin gastos en este período —</div>
 
   <hr class="dashed">
 
@@ -357,14 +360,21 @@ async function cloudDelete(id) {
 }
 async function flushPending() {
   let q = getPending();
+  let cambio = false;
   while (q.length) {
     const op = q[0];
     try {
-      if (op.t === "add") await cloudInsert(op.g);
-      else if (op.t === "del") await cloudDelete(op.id);
+      if (op.t === "add") {
+        await cloudInsert(op.g);
+        const loc = gastos.find(x => x.id === op.g.id);
+        if (loc) { delete loc.dirty; cambio = true; }
+      } else if (op.t === "del") {
+        await cloudDelete(op.id);
+      }
       q.shift(); setPending(q);
     } catch { break; }
   }
+  if (cambio) saveLocal();
 }
 async function syncFromCloud() {
   if (!supa) return;
@@ -375,7 +385,22 @@ async function syncFromCloud() {
       .select("id,fecha,categoria,detalle,monto,compartido")
       .order("fecha", { ascending: false });
     if (error) throw error;
-    gastos = data.map(r => ({ ...r, detalle: r.detalle || "", monto: Number(r.monto) }));
+    const cloud = data.map(r => ({ ...r, detalle: r.detalle || "", monto: Number(r.monto) }));
+    const cloudIds = new Set(cloud.map(g => g.id));
+    const byIdLocal = new Map(gastos.map(g => [g.id, g]));
+    // preferir la versión local si tiene cambios que aún no llegan a la nube,
+    // y conservar lo local que nunca alcanzó a subirse (dirty)
+    let merged = cloud.map(c => {
+      const loc = byIdLocal.get(c.id);
+      return loc && loc.dirty ? loc : c;
+    });
+    merged = merged.concat(gastos.filter(g => g.dirty && !cloudIds.has(g.id)));
+    for (const g of merged) {
+      if (!g.dirty) continue;
+      try { await cloudInsert(g); delete g.dirty; }
+      catch { enqueue({ t: "add", g }); }
+    }
+    gastos = merged;
     saveLocal();
     render();
   } catch (e) {
@@ -515,27 +540,39 @@ function renderTorta(list) {
       `<span class="lname">${cat}</span><span class="lpct">${pct}% · ${fmtCLP(val)}</span>`;
     leyenda.appendChild(row);
   }
+  // mantener abierta la categoría que se estaba mirando
+  if (catAbierta) {
+    const row = leyenda.querySelector(`.lrow[data-cat="${CSS.escape(catAbierta)}"]`);
+    if (row) row.after(buildDetail(catAbierta));
+    else catAbierta = null;
+  }
 }
 
 /* detalle por categoría: toca una fila de la leyenda para expandir */
-$("leyenda").addEventListener("click", (e) => {
-  const row = e.target.closest(".lrow");
-  if (!row) return;
-  const cat = row.dataset.cat;
-  const next = row.nextElementSibling;
-  const abierta = next && next.classList.contains("ldetail");
-  document.querySelectorAll("#leyenda .ldetail").forEach(d => d.remove());
-  if (abierta) return;
+let catAbierta = null;
+function buildDetail(cat) {
   const items = filtrados().filter(g => g.categoria === cat).sort((a, b) => b.monto - a.monto);
   const det = document.createElement("div");
   det.className = "ldetail";
   det.innerHTML = items.map(g => {
     const [y, m, d] = g.fecha.split("-");
-    return `<div class="drow"><span class="dfecha">${d}/${m}</span>` +
+    return `<div class="drow" data-id="${g.id}"><span class="dfecha">${d}/${m}</span>` +
       `<span class="ddesc">${escapeHTML(g.detalle) || "—"}${g.compartido ? ' <span class="tag-simon">Simon</span>' : ""}</span>` +
-      `<span class="dmonto">${fmtCLP(g.monto)}</span></div>`;
+      `<span class="dmonto">${fmtCLP(g.monto)}</span>` +
+      `<button type="button" class="edit" aria-label="Editar">✎</button>` +
+      `<button type="button" class="del" aria-label="Eliminar">✕</button></div>`;
   }).join("");
-  row.after(det);
+  return det;
+}
+$("leyenda").addEventListener("click", (e) => {
+  if (handleItemButtons(e)) return;
+  const row = e.target.closest(".lrow");
+  if (!row) return;
+  const cat = row.dataset.cat;
+  document.querySelectorAll("#leyenda .ldetail").forEach(d => d.remove());
+  if (catAbierta === cat) { catAbierta = null; return; }
+  catAbierta = cat;
+  row.after(buildDetail(cat));
 });
 
 function renderBarras(list) {
@@ -631,34 +668,38 @@ $("formGasto").addEventListener("submit", (e) => {
     };
     gastos.unshift(g);
   }
+  g.dirty = true;
   saveLocal();
   resetForm();
   render();
   $("monto").focus();
-  if (supa) cloudInsert(g).then(updatePill).catch(() => enqueue({ t: "add", g }));
+  if (supa) cloudInsert(g)
+    .then(() => { delete g.dirty; saveLocal(); updatePill(); })
+    .catch(() => enqueue({ t: "add", g }));
 });
 
-/* eliminar: delegación de eventos sobre la lista, confirmación en dos toques */
+/* editar/eliminar: delegación de eventos (lista y detalle por categoría),
+   eliminación con confirmación en dos toques */
 function resetDelButtons() {
-  document.querySelectorAll("#lista .del.confirm").forEach(b => {
+  document.querySelectorAll(".del.confirm").forEach(b => {
     b.classList.remove("confirm"); b.textContent = "✕";
     clearTimeout(Number(b.dataset.t));
   });
 }
-$("lista").addEventListener("click", (e) => {
-  const li = e.target.closest("li");
-  const id = li && li.dataset.id;
+function handleItemButtons(e) {
+  const cont = e.target.closest("[data-id]");
+  const id = cont && cont.dataset.id;
   const editBtn = e.target.closest(".edit");
-  if (editBtn && id) { resetDelButtons(); startEdit(id); return; }
+  if (editBtn && id) { resetDelButtons(); startEdit(id); return true; }
   const btn = e.target.closest(".del");
-  if (!btn) { resetDelButtons(); return; }
-  if (!id) return;
+  if (!btn) { resetDelButtons(); return false; }
+  if (!id) return true;
   if (!btn.classList.contains("confirm")) {
     resetDelButtons();
     btn.classList.add("confirm");
     btn.textContent = "OK?";
     btn.dataset.t = setTimeout(resetDelButtons, 3000);
-    return;
+    return true;
   }
   clearTimeout(Number(btn.dataset.t));
   gastos = gastos.filter(g => g.id !== id);
@@ -666,7 +707,9 @@ $("lista").addEventListener("click", (e) => {
   saveLocal();
   render();
   if (supa) cloudDelete(id).then(updatePill).catch(() => enqueue({ t: "del", id }));
-});
+  return true;
+}
+$("lista").addEventListener("click", handleItemButtons);
 
 /* filtros: navegación por mes + todo */
 $("mesPrev").addEventListener("click", () => {
@@ -720,9 +763,12 @@ $("fileImport").addEventListener("change", async (e) => {
       if (!g.id) continue; // ya existe
       if (!r.id) g.id = uuid();
       ids.add(g.id);
+      g.dirty = true;
       gastos.push(g);
       nuevos++;
-      if (supa) cloudInsert(g).catch(() => enqueue({ t: "add", g }));
+      if (supa) cloudInsert(g)
+        .then(() => { delete g.dirty; saveLocal(); updatePill(); })
+        .catch(() => enqueue({ t: "add", g }));
     }
     saveLocal();
     render();
