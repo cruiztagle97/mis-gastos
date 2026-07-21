@@ -93,8 +93,14 @@
     border-radius: 4px; cursor: pointer;
   }
   button.primary:active { opacity: .85; }
+  button.secondary {
+    width: 100%; margin-top: 8px; padding: 10px; font: inherit; font-size: 12px;
+    letter-spacing: 2px; background: transparent; color: var(--ink-soft);
+    border: 1.5px dashed var(--line); border-radius: 4px; cursor: pointer;
+  }
 
   .filters { display: flex; gap: 8px; margin: 4px 0 10px; }
+  .filters .nav { flex: 0 0 42px; font-size: 16px; padding: 8px 0; }
   .filters button {
     flex: 1; padding: 8px; font: inherit; font-size: 12px; letter-spacing: 1px;
     background: transparent; color: var(--ink-soft); border: 1.5px solid var(--line);
@@ -131,6 +137,11 @@
     font-size: 11px; font-weight: 700; background: var(--danger); color: #fff;
     border-radius: 3px; padding: 4px 6px;
   }
+  #lista li .edit {
+    background: none; border: none; color: var(--ink-soft); font: inherit;
+    font-size: 15px; cursor: pointer; padding: 2px 4px; line-height: 1;
+  }
+  #lista li.editing { background: var(--tag-bg); }
   .empty { text-align: center; color: var(--ink-soft); padding: 18px 0; font-size: 12px; }
 
   h2.section { font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--ink-soft); text-align: center; margin-bottom: 8px; }
@@ -138,10 +149,16 @@
   #chartTorta { max-height: 230px; }
   #chartBarras { max-height: 200px; }
   #leyenda { margin-top: 10px; font-size: 12px; }
-  #leyenda .lrow { display: flex; align-items: center; gap: 7px; padding: 2px 0; }
+  #leyenda .lrow { display: flex; align-items: center; gap: 7px; padding: 2px 0; cursor: pointer; }
   #leyenda .dot { width: 10px; height: 10px; border-radius: 2px; flex: none; }
   #leyenda .lname { flex: 1; }
   #leyenda .lpct { color: var(--ink-soft); }
+  #leyenda .ldetail { margin: 2px 0 8px 17px; padding-left: 8px; border-left: 1px dotted var(--line); }
+  #leyenda .drow { display: flex; gap: 6px; padding: 1px 0; font-size: 11px; }
+  #leyenda .drow .dfecha { white-space: nowrap; color: var(--ink-soft); }
+  #leyenda .drow .ddesc { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  #leyenda .drow .dmonto { white-space: nowrap; }
+  .hint { text-align: center; font-size: 10px; color: var(--ink-soft); margin-bottom: 6px; letter-spacing: 1px; }
 
   .backup { display: flex; gap: 8px; margin: 6px 0 14px; }
   .backup button {
@@ -211,20 +228,24 @@
       <input type="checkbox" id="compartido">
       <span>Compartido con Simon</span>
     </div>
-    <button class="primary" type="submit">AGREGAR GASTO</button>
+    <button class="primary" type="submit" id="btnSubmit">AGREGAR GASTO</button>
+    <button class="secondary hidden" type="button" id="btnCancelar">CANCELAR EDICIÓN</button>
   </form>
 
   <hr class="dashed">
 
   <div class="filters">
-    <button type="button" data-periodo="mes" class="active">ESTE MES</button>
-    <button type="button" data-periodo="todo">TODO</button>
+    <button type="button" id="mesPrev" class="nav" aria-label="Mes anterior">‹</button>
+    <button type="button" id="mesLabel" class="active">ESTE MES</button>
+    <button type="button" id="mesNext" class="nav" aria-label="Mes siguiente">›</button>
+    <button type="button" id="btnTodo">TODO</button>
   </div>
 
   <div class="totals">
     <div class="big" id="totalGeneral">$0</div>
     <div class="items" id="totalItems">0 artículos</div>
     <div class="shared" id="totalCompartido"></div>
+    <div class="shared" id="totalComparacion"></div>
   </div>
 
   <hr class="dashed">
@@ -235,6 +256,7 @@
   <hr class="dashed">
 
   <h2 class="section">Por categoría</h2>
+  <div class="hint">· toca una categoría para ver su detalle ·</div>
   <div class="chart-box"><canvas id="chartTorta"></canvas></div>
   <div id="leyenda"></div>
 
@@ -286,8 +308,11 @@ const uuid = () => (crypto.randomUUID ? crypto.randomUUID() :
     const r = Math.random()*16|0; return (c === "x" ? r : (r&0x3|0x8)).toString(16);
   }));
 
+const MESES = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
+
 let gastos = [];          // [{id, fecha, categoria, detalle, monto, compartido}]
-let periodo = "mes";      // "mes" | "todo"
+let periodo = { tipo: "mes", ym: hoyISO().slice(0, 7) };  // tipo: "mes" | "todo"
+let editandoId = null;    // id del gasto en edición, o null
 let chartTorta = null, chartBarras = null;
 let supa = null;          // cliente supabase (null = modo local)
 
@@ -380,9 +405,22 @@ $("lockForm").addEventListener("submit", async (e) => {
 
 /* ---------- helpers de período ---------- */
 function filtrados() {
-  if (periodo === "todo") return gastos.slice();
-  const pref = hoyISO().slice(0, 7);
-  return gastos.filter(g => g.fecha.startsWith(pref));
+  if (periodo.tipo === "todo") return gastos.slice();
+  return gastos.filter(g => g.fecha.startsWith(periodo.ym));
+}
+function ymShift(ym, delta) {
+  let [y, m] = ym.split("-").map(Number);
+  m += delta;
+  y += Math.floor((m - 1) / 12);
+  m = ((m - 1) % 12 + 12) % 12 + 1;
+  return `${y}-${String(m).padStart(2, "0")}`;
+}
+function etiquetaYm(ym) { return `${MESES[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}`; }
+function updateFiltroUI() {
+  const esMes = periodo.tipo === "mes";
+  $("mesLabel").classList.toggle("active", esMes);
+  $("btnTodo").classList.toggle("active", !esMes);
+  $("mesLabel").textContent = etiquetaYm(periodo.ym).toUpperCase();
 }
 
 /* ---------- render ---------- */
@@ -396,6 +434,18 @@ function render() {
   $("totalCompartido").innerHTML = compartido > 0
     ? `de eso, <b>${fmtCLP(compartido)}</b> compartido con Simon (pagado por ti)` : "";
 
+  // comparación con el mes anterior
+  const comp = $("totalComparacion");
+  comp.textContent = "";
+  if (periodo.tipo === "mes") {
+    const prevYm = ymShift(periodo.ym, -1);
+    const prevTotal = gastos.filter(g => g.fecha.startsWith(prevYm)).reduce((s, g) => s + g.monto, 0);
+    if (prevTotal > 0) {
+      const pct = Math.round((total - prevTotal) / prevTotal * 100);
+      comp.textContent = `${etiquetaYm(prevYm)}: ${fmtCLP(prevTotal)} · vas ${pct >= 0 ? "▲ +" : "▼ "}${pct}%`;
+    }
+  }
+
   // lista estilo boleta
   const ul = $("lista");
   ul.innerHTML = "";
@@ -403,6 +453,7 @@ function render() {
   for (const g of list) {
     const li = document.createElement("li");
     li.dataset.id = g.id;
+    if (g.id === editandoId) li.classList.add("editing");
     const [y, m, d] = g.fecha.split("-");
     const det = [g.detalle, g.compartido ? `<span class="tag-simon">Simon</span>` : ""]
       .filter(Boolean).join(" ");
@@ -412,6 +463,7 @@ function render() {
       (det ? `<div class="det">${escapeHTML(g.detalle)}${g.compartido ? ' <span class="tag-simon">Simon</span>' : ""}</div>` : "") +
       `</span>` +
       `<span class="monto">${fmtCLP(g.monto)}</span>` +
+      `<button type="button" class="edit" aria-label="Editar">✎</button>` +
       `<button type="button" class="del" aria-label="Eliminar">✕</button>`;
     ul.appendChild(li);
   }
@@ -458,32 +510,52 @@ function renderTorta(list) {
     const pct = (val / total * 100).toFixed(1).replace(".", ",");
     const row = document.createElement("div");
     row.className = "lrow";
+    row.dataset.cat = cat;
     row.innerHTML = `<span class="dot" style="background:${COLORES[CATEGORIAS.indexOf(cat)] || "#999"}"></span>` +
       `<span class="lname">${cat}</span><span class="lpct">${pct}% · ${fmtCLP(val)}</span>`;
     leyenda.appendChild(row);
   }
 }
 
+/* detalle por categoría: toca una fila de la leyenda para expandir */
+$("leyenda").addEventListener("click", (e) => {
+  const row = e.target.closest(".lrow");
+  if (!row) return;
+  const cat = row.dataset.cat;
+  const next = row.nextElementSibling;
+  const abierta = next && next.classList.contains("ldetail");
+  document.querySelectorAll("#leyenda .ldetail").forEach(d => d.remove());
+  if (abierta) return;
+  const items = filtrados().filter(g => g.categoria === cat).sort((a, b) => b.monto - a.monto);
+  const det = document.createElement("div");
+  det.className = "ldetail";
+  det.innerHTML = items.map(g => {
+    const [y, m, d] = g.fecha.split("-");
+    return `<div class="drow"><span class="dfecha">${d}/${m}</span>` +
+      `<span class="ddesc">${escapeHTML(g.detalle) || "—"}${g.compartido ? ' <span class="tag-simon">Simon</span>' : ""}</span>` +
+      `<span class="dmonto">${fmtCLP(g.monto)}</span></div>`;
+  }).join("");
+  row.after(det);
+});
+
 function renderBarras(list) {
   const canvas = $("chartBarras");
   if (chartBarras) { chartBarras.destroy(); chartBarras = null; }
   let labels = [], data = [];
 
-  if (periodo === "mes") {
-    $("tituloBarras").textContent = "Gasto por día";
-    const hoy = new Date();
-    const dias = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0).getDate();
-    const pref = hoyISO().slice(0, 7);
+  if (periodo.tipo === "mes") {
+    $("tituloBarras").textContent = `Gasto por día (${etiquetaYm(periodo.ym)})`;
+    const [yy, mm] = periodo.ym.split("-").map(Number);
+    const dias = new Date(yy, mm, 0).getDate();
     const porDia = new Array(dias + 1).fill(0);
-    for (const g of list) if (g.fecha.startsWith(pref)) porDia[Number(g.fecha.slice(8, 10))] += g.monto;
+    for (const g of list) if (g.fecha.startsWith(periodo.ym)) porDia[Number(g.fecha.slice(8, 10))] += g.monto;
     for (let d = 1; d <= dias; d++) { labels.push(String(d)); data.push(porDia[d]); }
   } else {
     $("tituloBarras").textContent = "Gasto por mes";
     const porMes = {};
     for (const g of list) { const k = g.fecha.slice(0, 7); porMes[k] = (porMes[k] || 0) + g.monto; }
     const keys = Object.keys(porMes).sort();
-    const MES = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
-    labels = keys.map(k => `${MES[Number(k.slice(5, 7)) - 1]} ${k.slice(0, 4)}`);
+    labels = keys.map(etiquetaYm);
     data = keys.map(k => porMes[k]);
   }
 
@@ -510,26 +582,58 @@ function renderBarras(list) {
 }
 
 /* ---------- acciones ---------- */
+function resetForm() {
+  editandoId = null;
+  $("monto").value = ""; $("detalle").value = ""; $("compartido").checked = false;
+  $("fecha").value = hoyISO(); $("categoria").selectedIndex = 0;
+  $("btnSubmit").textContent = "AGREGAR GASTO";
+  $("btnCancelar").classList.add("hidden");
+}
+function startEdit(id) {
+  const g = gastos.find(x => x.id === id);
+  if (!g) return;
+  editandoId = id;
+  $("monto").value = g.monto;
+  $("fecha").value = g.fecha;
+  $("categoria").value = g.categoria;
+  $("detalle").value = g.detalle;
+  $("compartido").checked = g.compartido;
+  $("btnSubmit").textContent = "GUARDAR CAMBIOS";
+  $("btnCancelar").classList.remove("hidden");
+  render();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+$("btnCancelar").addEventListener("click", () => { resetForm(); render(); });
+
 $("formGasto").addEventListener("submit", (e) => {
   e.preventDefault();
   const monto = Math.round(Number($("monto").value));
   if (!monto || monto <= 0 || !Number.isFinite(monto)) {
     $("monto").focus(); return;
   }
-  const g = {
-    id: uuid(),
-    fecha: $("fecha").value || hoyISO(),
-    categoria: $("categoria").value,
-    detalle: $("detalle").value.trim(),
-    monto,
-    compartido: $("compartido").checked
-  };
-  gastos.unshift(g);
+  let g;
+  if (editandoId) {
+    g = gastos.find(x => x.id === editandoId);
+    if (!g) { resetForm(); return; }
+    g.fecha = $("fecha").value || hoyISO();
+    g.categoria = $("categoria").value;
+    g.detalle = $("detalle").value.trim();
+    g.monto = monto;
+    g.compartido = $("compartido").checked;
+  } else {
+    g = {
+      id: uuid(),
+      fecha: $("fecha").value || hoyISO(),
+      categoria: $("categoria").value,
+      detalle: $("detalle").value.trim(),
+      monto,
+      compartido: $("compartido").checked
+    };
+    gastos.unshift(g);
+  }
   saveLocal();
+  resetForm();
   render();
-  // limpiar formulario
-  $("monto").value = ""; $("detalle").value = ""; $("compartido").checked = false;
-  $("fecha").value = hoyISO(); $("categoria").selectedIndex = 0;
   $("monto").focus();
   if (supa) cloudInsert(g).then(updatePill).catch(() => enqueue({ t: "add", g }));
 });
@@ -542,10 +646,12 @@ function resetDelButtons() {
   });
 }
 $("lista").addEventListener("click", (e) => {
+  const li = e.target.closest("li");
+  const id = li && li.dataset.id;
+  const editBtn = e.target.closest(".edit");
+  if (editBtn && id) { resetDelButtons(); startEdit(id); return; }
   const btn = e.target.closest(".del");
   if (!btn) { resetDelButtons(); return; }
-  const li = btn.closest("li");
-  const id = li && li.dataset.id;
   if (!id) return;
   if (!btn.classList.contains("confirm")) {
     resetDelButtons();
@@ -556,18 +662,30 @@ $("lista").addEventListener("click", (e) => {
   }
   clearTimeout(Number(btn.dataset.t));
   gastos = gastos.filter(g => g.id !== id);
+  if (id === editandoId) resetForm();
   saveLocal();
   render();
   if (supa) cloudDelete(id).then(updatePill).catch(() => enqueue({ t: "del", id }));
 });
 
-/* filtros */
-document.querySelectorAll(".filters button").forEach(b => {
-  b.addEventListener("click", () => {
-    periodo = b.dataset.periodo;
-    document.querySelectorAll(".filters button").forEach(x => x.classList.toggle("active", x === b));
-    render();
-  });
+/* filtros: navegación por mes + todo */
+$("mesPrev").addEventListener("click", () => {
+  if (periodo.tipo !== "mes") periodo = { tipo: "mes", ym: periodo.ym };
+  else periodo.ym = ymShift(periodo.ym, -1);
+  updateFiltroUI(); render();
+});
+$("mesNext").addEventListener("click", () => {
+  if (periodo.tipo !== "mes") periodo = { tipo: "mes", ym: periodo.ym };
+  else periodo.ym = ymShift(periodo.ym, 1);
+  updateFiltroUI(); render();
+});
+$("mesLabel").addEventListener("click", () => {
+  periodo = { tipo: "mes", ym: hoyISO().slice(0, 7) };  // volver al mes actual
+  updateFiltroUI(); render();
+});
+$("btnTodo").addEventListener("click", () => {
+  periodo = { tipo: "todo", ym: periodo.ym };
+  updateFiltroUI(); render();
 });
 
 /* exportar / importar */
@@ -628,6 +746,7 @@ window.addEventListener("offline", () => updatePill());
   }
   $("fecha").value = hoyISO();
   loadLocal();
+  updateFiltroUI();
   render();
   updatePill();
   initCloud();
