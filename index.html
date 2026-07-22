@@ -108,11 +108,35 @@
   }
   .filters button.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 
+  .modo-row { display: flex; gap: 6px; margin: 0 0 4px; }
+  .modo-row button {
+    flex: 1; padding: 6px; font: inherit; font-size: 10px; letter-spacing: .5px;
+    background: transparent; color: var(--ink-soft); border: 1px dashed var(--line);
+    border-radius: 4px; cursor: pointer;
+  }
+  .modo-row button.active {
+    background: var(--tag-bg); color: var(--tag-ink); border-color: var(--tag-ink); border-style: solid;
+  }
+  .rango-hint { text-align: center; font-size: 10px; color: var(--ink-soft); margin-bottom: 8px; min-height: 12px; }
+
   .totals { text-align: center; padding: 4px 0; }
   .totals .big { font-size: 26px; font-weight: 700; letter-spacing: 1px; }
   .totals .items { color: var(--ink-soft); font-size: 12px; }
   .totals .shared { font-size: 12px; margin-top: 6px; color: var(--ink-soft); }
   .totals .shared b { color: var(--ink); }
+
+  .presupuesto { padding: 4px 0 2px; }
+  .presupuesto .ptitulo {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    font-size: 12px; color: var(--ink-soft); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px;
+  }
+  .gear { background: none; border: none; color: var(--ink-soft); font-size: 14px; cursor: pointer; padding: 2px 4px; }
+  .barra-bg { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; height: 16px; overflow: hidden; }
+  .barra-fill { height: 100%; background: var(--accent); transition: width .3s; }
+  .barra-fill.over { background: var(--danger); }
+  .presu-detalle { text-align: center; font-size: 11px; color: var(--ink-soft); margin-top: 6px; }
+  .presu-detalle b { color: var(--ink); }
+  .config-panel { padding: 10px 0 2px; }
 
   #lista { list-style: none; }
   #lista li {
@@ -242,12 +266,41 @@
     <button type="button" id="mesNext" class="nav" aria-label="Mes siguiente">›</button>
     <button type="button" id="btnTodo">TODO</button>
   </div>
+  <div class="modo-row" id="modoRow">
+    <button type="button" id="modoCal" class="active">MES CALENDARIO</button>
+    <button type="button" id="modoCiclo">CICLO TARJETA (20-19)</button>
+  </div>
+  <div class="rango-hint" id="rangoHint"></div>
 
   <div class="totals">
     <div class="big" id="totalGeneral">$0</div>
     <div class="items" id="totalItems">0 artículos</div>
     <div class="shared" id="totalCompartido"></div>
     <div class="shared" id="totalComparacion"></div>
+  </div>
+
+  <hr class="dashed">
+
+  <div class="presupuesto" id="presupuesto">
+    <div class="ptitulo">Presupuesto · ahorro <span id="ahorroPctLabel">30%</span>
+      <button type="button" id="btnConfig" class="gear" aria-label="Configurar sueldo y ahorro">⚙</button>
+    </div>
+    <div class="barra-bg"><div class="barra-fill" id="barraFill" style="width:0%"></div></div>
+    <div class="presu-detalle" id="presuDetalle"></div>
+  </div>
+
+  <div class="config-panel hidden" id="panelConfig">
+    <div class="row2">
+      <div>
+        <label for="sueldoInput">Sueldo mensual (CLP)</label>
+        <input type="number" id="sueldoInput" min="0" step="1000">
+      </div>
+      <div>
+        <label for="ahorroInput">Meta ahorro (%)</label>
+        <input type="number" id="ahorroInput" min="0" max="100" step="1">
+      </div>
+    </div>
+    <button type="button" class="primary" id="btnGuardarConfig">GUARDAR</button>
   </div>
 
   <hr class="dashed">
@@ -299,6 +352,8 @@ const COLORES = ["#c0392b","#d4820a","#b7a112","#1a7a4a","#16948c","#2471a3","#5
 
 const LS_DATA = "mg_gastos_v1";
 const LS_PENDING = "mg_pending_v1";
+const LS_CONFIG = "mg_config_v1";
+const LS_MODO = "mg_modo_v1";
 
 const $ = (id) => document.getElementById(id);
 const fmtCLP = (n) => new Intl.NumberFormat("es-CL", { style: "currency", currency: "CLP", maximumFractionDigits: 0 }).format(n);
@@ -315,6 +370,8 @@ const MESES = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov"
 
 let gastos = [];          // [{id, fecha, categoria, detalle, monto, compartido}]
 let periodo = { tipo: "mes", ym: hoyISO().slice(0, 7) };  // tipo: "mes" | "todo"
+let modo = localStorage.getItem(LS_MODO) || "calendario"; // "calendario" | "ciclo" (20-19, tarjeta)
+let config = { sueldo: 1500000, ahorroPct: 30 };
 let editandoId = null;    // id del gasto en edición, o null
 let chartTorta = null, chartBarras = null;
 let supa = null;          // cliente supabase (null = modo local)
@@ -331,6 +388,13 @@ function getPending() {
 }
 function setPending(q) { localStorage.setItem(LS_PENDING, JSON.stringify(q)); }
 function enqueue(op) { const q = getPending(); q.push(op); setPending(q); updatePill(); }
+function loadConfigLocal() {
+  try {
+    const c = JSON.parse(localStorage.getItem(LS_CONFIG));
+    if (c && c.sueldo > 0) config = { sueldo: c.sueldo, ahorroPct: c.ahorroPct };
+  } catch {}
+}
+function saveConfigLocal() { localStorage.setItem(LS_CONFIG, JSON.stringify(config)); }
 
 /* ---------- estado de sincronización ---------- */
 function updatePill(state) {
@@ -358,6 +422,15 @@ async function cloudDelete(id) {
   const { error } = await supa.from("gastos").delete().eq("id", id);
   if (error) throw error;
 }
+async function cloudLoadConfig() {
+  const { data, error } = await supa.from("config").select("sueldo,ahorro_pct").eq("id", "main").maybeSingle();
+  if (error) throw error;
+  if (data) config = { sueldo: Number(data.sueldo), ahorroPct: Number(data.ahorro_pct) };
+}
+async function cloudSaveConfig() {
+  const { error } = await supa.from("config").upsert({ id: "main", sueldo: config.sueldo, ahorro_pct: config.ahorroPct });
+  if (error) throw error;
+}
 async function flushPending() {
   let q = getPending();
   let cambio = false;
@@ -381,6 +454,7 @@ async function syncFromCloud() {
   updatePill("syncing");
   try {
     await flushPending();
+    try { await cloudLoadConfig(); saveConfigLocal(); } catch (e) { console.warn("Config sync falló:", e.message || e); }
     const { data, error } = await supa.from("gastos")
       .select("id,fecha,categoria,detalle,monto,compartido")
       .order("fecha", { ascending: false });
@@ -429,10 +503,6 @@ $("lockForm").addEventListener("submit", async (e) => {
 });
 
 /* ---------- helpers de período ---------- */
-function filtrados() {
-  if (periodo.tipo === "todo") return gastos.slice();
-  return gastos.filter(g => g.fecha.startsWith(periodo.ym));
-}
 function ymShift(ym, delta) {
   let [y, m] = ym.split("-").map(Number);
   m += delta;
@@ -440,12 +510,39 @@ function ymShift(ym, delta) {
   m = ((m - 1) % 12 + 12) % 12 + 1;
   return `${y}-${String(m).padStart(2, "0")}`;
 }
+// rango de fechas [inicio, fin] (ISO) para un mes "ym":
+// calendario = 1 al último día del mes; ciclo = tarjeta CMR, 20 del mes
+// anterior al 19 del mes ym (así llega la cartola real del banco)
+function periodoRange(ym, modoActual) {
+  if (modoActual === "ciclo") {
+    return [`${ymShift(ym, -1)}-20`, `${ym}-19`];
+  }
+  const [y, m] = ym.split("-").map(Number);
+  const ultimo = new Date(y, m, 0).getDate();
+  return [`${ym}-01`, `${ym}-${String(ultimo).padStart(2, "0")}`];
+}
+function filtrados() {
+  if (periodo.tipo === "todo") return gastos.slice();
+  const [ini, fin] = periodoRange(periodo.ym, modo);
+  return gastos.filter(g => g.fecha >= ini && g.fecha <= fin);
+}
 function etiquetaYm(ym) { return `${MESES[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}`; }
 function updateFiltroUI() {
   const esMes = periodo.tipo === "mes";
   $("mesLabel").classList.toggle("active", esMes);
   $("btnTodo").classList.toggle("active", !esMes);
   $("mesLabel").textContent = etiquetaYm(periodo.ym).toUpperCase();
+  $("modoRow").classList.toggle("hidden", !esMes);
+  $("modoCal").classList.toggle("active", modo === "calendario");
+  $("modoCiclo").classList.toggle("active", modo === "ciclo");
+  if (esMes && modo === "ciclo") {
+    const [ini, fin] = periodoRange(periodo.ym, modo);
+    const [, im, id] = ini.split("-");
+    const [, fm, fd] = fin.split("-");
+    $("rangoHint").textContent = `· del ${id}/${im} al ${fd}/${fm} ·`;
+  } else {
+    $("rangoHint").textContent = "";
+  }
 }
 
 /* ---------- render ---------- */
@@ -464,12 +561,15 @@ function render() {
   comp.textContent = "";
   if (periodo.tipo === "mes") {
     const prevYm = ymShift(periodo.ym, -1);
-    const prevTotal = gastos.filter(g => g.fecha.startsWith(prevYm)).reduce((s, g) => s + g.monto, 0);
+    const [pIni, pFin] = periodoRange(prevYm, modo);
+    const prevTotal = gastos.filter(g => g.fecha >= pIni && g.fecha <= pFin).reduce((s, g) => s + g.monto, 0);
     if (prevTotal > 0) {
       const pct = Math.round((total - prevTotal) / prevTotal * 100);
       comp.textContent = `${etiquetaYm(prevYm)}: ${fmtCLP(prevTotal)} · vas ${pct >= 0 ? "▲ +" : "▼ "}${pct}%`;
     }
   }
+
+  renderPresupuesto(total);
 
   // lista estilo boleta
   const ul = $("lista");
@@ -494,6 +594,22 @@ function render() {
   }
   renderTorta(list);
   renderBarras(list);
+}
+
+function renderPresupuesto(total) {
+  const cont = $("presupuesto");
+  if (periodo.tipo !== "mes") { cont.classList.add("hidden"); return; }
+  cont.classList.remove("hidden");
+  $("ahorroPctLabel").textContent = config.ahorroPct + "%";
+  const presupuestoGasto = Math.round(config.sueldo * (1 - config.ahorroPct / 100));
+  const pct = presupuestoGasto > 0 ? Math.min(100, Math.round(total / presupuestoGasto * 100)) : 0;
+  const fill = $("barraFill");
+  fill.style.width = pct + "%";
+  fill.classList.toggle("over", total > presupuestoGasto);
+  const detalle = $("presuDetalle");
+  detalle.innerHTML = total <= presupuestoGasto
+    ? `<b>${fmtCLP(total)}</b> de ${fmtCLP(presupuestoGasto)} (${pct}%) · te quedan <b>${fmtCLP(presupuestoGasto - total)}</b>`
+    : `<b>${fmtCLP(total)}</b> de ${fmtCLP(presupuestoGasto)} · te pasaste por <b>${fmtCLP(total - presupuestoGasto)}</b>`;
 }
 
 function escapeHTML(s) {
@@ -581,12 +697,19 @@ function renderBarras(list) {
   let labels = [], data = [];
 
   if (periodo.tipo === "mes") {
-    $("tituloBarras").textContent = `Gasto por día (${etiquetaYm(periodo.ym)})`;
-    const [yy, mm] = periodo.ym.split("-").map(Number);
-    const dias = new Date(yy, mm, 0).getDate();
-    const porDia = new Array(dias + 1).fill(0);
-    for (const g of list) if (g.fecha.startsWith(periodo.ym)) porDia[Number(g.fecha.slice(8, 10))] += g.monto;
-    for (let d = 1; d <= dias; d++) { labels.push(String(d)); data.push(porDia[d]); }
+    $("tituloBarras").textContent = modo === "ciclo"
+      ? `Gasto por día (ciclo ${etiquetaYm(periodo.ym)})` : `Gasto por día (${etiquetaYm(periodo.ym)})`;
+    const [ini, fin] = periodoRange(periodo.ym, modo);
+    const porDia = {};
+    for (const g of list) porDia[g.fecha] = (porDia[g.fecha] || 0) + g.monto;
+    let d = new Date(ini + "T00:00:00");
+    const finD = new Date(fin + "T00:00:00");
+    while (d <= finD) {
+      const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      labels.push(modo === "ciclo" ? `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}` : String(d.getDate()));
+      data.push(porDia[iso] || 0);
+      d.setDate(d.getDate() + 1);
+    }
   } else {
     $("tituloBarras").textContent = "Gasto por mes";
     const porMes = {};
@@ -730,6 +853,32 @@ $("btnTodo").addEventListener("click", () => {
   periodo = { tipo: "todo", ym: periodo.ym };
   updateFiltroUI(); render();
 });
+$("modoCal").addEventListener("click", () => {
+  modo = "calendario"; localStorage.setItem(LS_MODO, modo); updateFiltroUI(); render();
+});
+$("modoCiclo").addEventListener("click", () => {
+  modo = "ciclo"; localStorage.setItem(LS_MODO, modo); updateFiltroUI(); render();
+});
+
+/* presupuesto y configuración de sueldo/ahorro */
+$("btnConfig").addEventListener("click", () => {
+  const panel = $("panelConfig");
+  panel.classList.toggle("hidden");
+  if (!panel.classList.contains("hidden")) {
+    $("sueldoInput").value = config.sueldo;
+    $("ahorroInput").value = config.ahorroPct;
+  }
+});
+$("btnGuardarConfig").addEventListener("click", async () => {
+  const sueldo = Math.round(Number($("sueldoInput").value));
+  const ahorroPct = Math.round(Number($("ahorroInput").value));
+  if (!(sueldo > 0) || !(ahorroPct >= 0 && ahorroPct <= 100)) return;
+  config = { sueldo, ahorroPct };
+  saveConfigLocal();
+  render();
+  $("panelConfig").classList.add("hidden");
+  if (supa) { try { await cloudSaveConfig(); } catch { /* se reintenta en el próximo sync */ } }
+});
 
 /* exportar / importar */
 $("btnExportar").addEventListener("click", () => {
@@ -792,6 +941,7 @@ window.addEventListener("offline", () => updatePill());
   }
   $("fecha").value = hoyISO();
   loadLocal();
+  loadConfigLocal();
   updateFiltroUI();
   render();
   updatePill();
