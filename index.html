@@ -153,6 +153,11 @@
     background: var(--tag-bg); color: var(--tag-ink); border-radius: 3px;
     padding: 1px 5px; vertical-align: 1px;
   }
+  .tag-medio {
+    display: inline-block; font-size: 10px; letter-spacing: .3px;
+    background: transparent; color: var(--ink-soft); border: 1px solid var(--line); border-radius: 3px;
+    padding: 0px 5px; vertical-align: 1px;
+  }
   #lista li .del, #leyenda .drow .del {
     background: none; border: none; color: var(--danger); font: inherit;
     font-size: 16px; cursor: pointer; padding: 2px 6px; line-height: 1;
@@ -248,6 +253,8 @@
     </div>
     <label for="categoria">Categoría</label>
     <select id="categoria" required></select>
+    <label for="medio">Medio de pago (opcional)</label>
+    <select id="medio"></select>
     <label for="detalle">Detalle (opcional)</label>
     <input type="text" id="detalle" maxlength="120" placeholder="ej: cuenta de la luz">
     <div class="check-row">
@@ -347,8 +354,38 @@ const SUPABASE_URL = "https://otvazmkzlzmldnhiufnf.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im90dmF6bWt6bHptbGRuaGl1Zm5mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ2NjA2NTAsImV4cCI6MjEwMDIzNjY1MH0.pJSs-iOUj_86BNx_FJEpdsH0Ai1PBOMCsG9qhzbMqrM";
 const SUPABASE_EMAIL = "camila.ruiztagle.1997@gmail.com";
 
-const CATEGORIAS = ["Arriendo","Gastos comunes","Cuentas depto","Comida","Salidas a comer","Snacks","Transporte","Servicios","Entretención","Compras","Salud","Otros"];
-const COLORES = ["#c0392b","#d4820a","#b7a112","#1a7a4a","#16948c","#2471a3","#5b4ea3","#8e44ad","#c2447e","#7f8c8d","#8a6d3b","#5d6d7e"];
+const CATEGORIAS = ["Arriendo","Gastos comunes","Cuentas depto","Comida","Salidas a comer","Snacks","Transporte","Servicios","Entretención","Compras","Regalos","Viajes","Cuidado personal","Salud","Otros"];
+const COLORES = ["#c0392b","#d4820a","#b7a112","#1a7a4a","#16948c","#2471a3","#5b4ea3","#8e44ad","#c2447e","#7f8c8d","#d1495b","#f2a541","#e07a5f","#8a6d3b","#5d6d7e"];
+const MEDIOS_BASE = ["CMR", "Santander Visa", "Cuenta Vista", "Efectivo", "Otro"];
+
+function getCategorias() { return CATEGORIAS.concat(config.categoriasExtra || []); }
+function getMedios() { return MEDIOS_BASE.concat(config.mediosPago || []); }
+function colorFor(cat) {
+  const idx = CATEGORIAS.indexOf(cat);
+  if (idx >= 0) return COLORES[idx];
+  let h = 0;
+  for (let i = 0; i < cat.length; i++) h = (h * 31 + cat.charCodeAt(i)) % 360;
+  return `hsl(${h}, 55%, 45%)`;
+}
+function poblarSelect(select, opciones, { conBlanco = false, valorActual } = {}) {
+  select.innerHTML = "";
+  if (conBlanco) {
+    const op = document.createElement("option");
+    op.value = ""; op.textContent = "— Sin especificar —";
+    select.appendChild(op);
+  }
+  for (const o of opciones) {
+    const op = document.createElement("option");
+    op.value = o; op.textContent = o;
+    select.appendChild(op);
+  }
+  const addOp = document.createElement("option");
+  addOp.value = "__add__"; addOp.textContent = "＋ Agregar…";
+  select.appendChild(addOp);
+  select.value = valorActual !== undefined && valorActual !== null && (opciones.includes(valorActual) || valorActual === "")
+    ? valorActual
+    : (conBlanco ? "" : opciones[0]);
+}
 
 const LS_DATA = "mg_gastos_v1";
 const LS_PENDING = "mg_pending_v1";
@@ -371,7 +408,7 @@ const MESES = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov"
 let gastos = [];          // [{id, fecha, categoria, detalle, monto, compartido}]
 let periodo = { tipo: "mes", ym: hoyISO().slice(0, 7) };  // tipo: "mes" | "todo"
 let modo = localStorage.getItem(LS_MODO) || "calendario"; // "calendario" | "ciclo" (20-19, tarjeta)
-let config = { sueldo: 1500000, ahorroPct: 30 };
+let config = { sueldo: 1500000, ahorroPct: 30, categoriasExtra: [], mediosPago: [] };
 let editandoId = null;    // id del gasto en edición, o null
 let chartTorta = null, chartBarras = null;
 let supa = null;          // cliente supabase (null = modo local)
@@ -391,7 +428,12 @@ function enqueue(op) { const q = getPending(); q.push(op); setPending(q); update
 function loadConfigLocal() {
   try {
     const c = JSON.parse(localStorage.getItem(LS_CONFIG));
-    if (c && c.sueldo > 0) config = { sueldo: c.sueldo, ahorroPct: c.ahorroPct };
+    if (c && c.sueldo > 0) {
+      config = {
+        sueldo: c.sueldo, ahorroPct: c.ahorroPct,
+        categoriasExtra: c.categoriasExtra || [], mediosPago: c.mediosPago || []
+      };
+    }
   } catch {}
 }
 function saveConfigLocal() { localStorage.setItem(LS_CONFIG, JSON.stringify(config)); }
@@ -414,7 +456,7 @@ function updatePill(state) {
 async function cloudInsert(g) {
   const { error } = await supa.from("gastos").upsert({
     id: g.id, fecha: g.fecha, categoria: g.categoria,
-    detalle: g.detalle || null, monto: g.monto, compartido: g.compartido
+    detalle: g.detalle || null, monto: g.monto, compartido: g.compartido, medio: g.medio || null
   });
   if (error) throw error;
 }
@@ -423,12 +465,21 @@ async function cloudDelete(id) {
   if (error) throw error;
 }
 async function cloudLoadConfig() {
-  const { data, error } = await supa.from("config").select("sueldo,ahorro_pct").eq("id", "main").maybeSingle();
+  const { data, error } = await supa.from("config")
+    .select("sueldo,ahorro_pct,categorias_extra,medios_pago").eq("id", "main").maybeSingle();
   if (error) throw error;
-  if (data) config = { sueldo: Number(data.sueldo), ahorroPct: Number(data.ahorro_pct) };
+  if (data) {
+    config = {
+      sueldo: Number(data.sueldo), ahorroPct: Number(data.ahorro_pct),
+      categoriasExtra: data.categorias_extra || [], mediosPago: data.medios_pago || []
+    };
+  }
 }
 async function cloudSaveConfig() {
-  const { error } = await supa.from("config").upsert({ id: "main", sueldo: config.sueldo, ahorro_pct: config.ahorroPct });
+  const { error } = await supa.from("config").upsert({
+    id: "main", sueldo: config.sueldo, ahorro_pct: config.ahorroPct,
+    categorias_extra: config.categoriasExtra, medios_pago: config.mediosPago
+  });
   if (error) throw error;
 }
 async function flushPending() {
@@ -454,12 +505,17 @@ async function syncFromCloud() {
   updatePill("syncing");
   try {
     await flushPending();
-    try { await cloudLoadConfig(); saveConfigLocal(); } catch (e) { console.warn("Config sync falló:", e.message || e); }
+    try {
+      await cloudLoadConfig();
+      saveConfigLocal();
+      poblarSelect($("categoria"), getCategorias(), { valorActual: $("categoria").value });
+      poblarSelect($("medio"), getMedios(), { conBlanco: true, valorActual: $("medio").value });
+    } catch (e) { console.warn("Config sync falló:", e.message || e); }
     const { data, error } = await supa.from("gastos")
-      .select("id,fecha,categoria,detalle,monto,compartido")
+      .select("id,fecha,categoria,detalle,monto,compartido,medio")
       .order("fecha", { ascending: false });
     if (error) throw error;
-    const cloud = data.map(r => ({ ...r, detalle: r.detalle || "", monto: Number(r.monto) }));
+    const cloud = data.map(r => ({ ...r, detalle: r.detalle || "", monto: Number(r.monto), medio: r.medio || "" }));
     const cloudIds = new Set(cloud.map(g => g.id));
     const byIdLocal = new Map(gastos.map(g => [g.id, g]));
     // preferir la versión local si tiene cambios que aún no llegan a la nube,
@@ -580,12 +636,13 @@ function render() {
     li.dataset.id = g.id;
     if (g.id === editandoId) li.classList.add("editing");
     const [y, m, d] = g.fecha.split("-");
-    const det = [g.detalle, g.compartido ? `<span class="tag-simon">Simon</span>` : ""]
-      .filter(Boolean).join(" ");
+    const det = [g.detalle, g.medio, g.compartido ? "Simon" : ""].filter(Boolean).join(" ");
     li.innerHTML =
       `<span class="fecha">${d}/${m}</span>` +
       `<span class="desc"><span class="cat">${g.categoria}</span>` +
-      (det ? `<div class="det">${escapeHTML(g.detalle)}${g.compartido ? ' <span class="tag-simon">Simon</span>' : ""}</div>` : "") +
+      (det ? `<div class="det">${escapeHTML(g.detalle)}` +
+        (g.medio ? ` <span class="tag-medio">${escapeHTML(g.medio)}</span>` : "") +
+        (g.compartido ? ' <span class="tag-simon">Simon</span>' : "") + `</div>` : "") +
       `</span>` +
       `<span class="monto">${fmtCLP(g.monto)}</span>` +
       `<button type="button" class="edit" aria-label="Editar">✎</button>` +
@@ -630,7 +687,7 @@ function renderTorta(list) {
   if (!entries.length) { canvas.style.display = "none"; leyenda.innerHTML = '<div class="empty">— sin datos —</div>'; return; }
   canvas.style.display = "";
 
-  const colores = entries.map(([cat]) => COLORES[CATEGORIAS.indexOf(cat)] || "#999");
+  const colores = entries.map(([cat]) => colorFor(cat));
   chartTorta = new Chart(canvas, {
     type: "doughnut",
     data: {
@@ -652,7 +709,7 @@ function renderTorta(list) {
     const row = document.createElement("div");
     row.className = "lrow";
     row.dataset.cat = cat;
-    row.innerHTML = `<span class="dot" style="background:${COLORES[CATEGORIAS.indexOf(cat)] || "#999"}"></span>` +
+    row.innerHTML = `<span class="dot" style="background:${colorFor(cat)}"></span>` +
       `<span class="lname">${cat}</span><span class="lpct">${pct}% · ${fmtCLP(val)}</span>`;
     leyenda.appendChild(row);
   }
@@ -673,7 +730,9 @@ function buildDetail(cat) {
   det.innerHTML = items.map(g => {
     const [y, m, d] = g.fecha.split("-");
     return `<div class="drow" data-id="${g.id}"><span class="dfecha">${d}/${m}</span>` +
-      `<span class="ddesc">${escapeHTML(g.detalle) || "—"}${g.compartido ? ' <span class="tag-simon">Simon</span>' : ""}</span>` +
+      `<span class="ddesc">${escapeHTML(g.detalle) || "—"}` +
+      `${g.medio ? ` <span class="tag-medio">${escapeHTML(g.medio)}</span>` : ""}` +
+      `${g.compartido ? ' <span class="tag-simon">Simon</span>' : ""}</span>` +
       `<span class="dmonto">${fmtCLP(g.monto)}</span>` +
       `<button type="button" class="edit" aria-label="Editar">✎</button>` +
       `<button type="button" class="del" aria-label="Eliminar">✕</button></div>`;
@@ -745,7 +804,9 @@ function renderBarras(list) {
 function resetForm() {
   editandoId = null;
   $("monto").value = ""; $("detalle").value = ""; $("compartido").checked = false;
-  $("fecha").value = hoyISO(); $("categoria").selectedIndex = 0;
+  $("fecha").value = hoyISO();
+  poblarSelect($("categoria"), getCategorias());
+  poblarSelect($("medio"), getMedios(), { conBlanco: true });
   $("btnSubmit").textContent = "AGREGAR GASTO";
   $("btnCancelar").classList.add("hidden");
 }
@@ -755,7 +816,8 @@ function startEdit(id) {
   editandoId = id;
   $("monto").value = g.monto;
   $("fecha").value = g.fecha;
-  $("categoria").value = g.categoria;
+  poblarSelect($("categoria"), getCategorias(), { valorActual: g.categoria });
+  poblarSelect($("medio"), getMedios(), { conBlanco: true, valorActual: g.medio || "" });
   $("detalle").value = g.detalle;
   $("compartido").checked = g.compartido;
   $("btnSubmit").textContent = "GUARDAR CAMBIOS";
@@ -777,6 +839,7 @@ $("formGasto").addEventListener("submit", (e) => {
     if (!g) { resetForm(); return; }
     g.fecha = $("fecha").value || hoyISO();
     g.categoria = $("categoria").value;
+    g.medio = $("medio").value;
     g.detalle = $("detalle").value.trim();
     g.monto = monto;
     g.compartido = $("compartido").checked;
@@ -785,6 +848,7 @@ $("formGasto").addEventListener("submit", (e) => {
       id: uuid(),
       fecha: $("fecha").value || hoyISO(),
       categoria: $("categoria").value,
+      medio: $("medio").value,
       detalle: $("detalle").value.trim(),
       monto,
       compartido: $("compartido").checked
@@ -860,6 +924,26 @@ $("modoCiclo").addEventListener("click", () => {
   modo = "ciclo"; localStorage.setItem(LS_MODO, modo); updateFiltroUI(); render();
 });
 
+/* agregar categorías / medios de pago personalizados desde el propio selector */
+function agregarPersonalizado(select, listaExtra, getFullList, conBlanco, etiqueta) {
+  if (select.value !== "__add__") return;
+  const nombre = (prompt(`Nombre de la nueva ${etiqueta}:`) || "").trim();
+  if (!nombre) { poblarSelect(select, getFullList().filter(x => x !== "__add__"), { conBlanco }); return; }
+  const yaExiste = getFullList().some(c => c.toLowerCase() === nombre.toLowerCase());
+  if (!yaExiste) {
+    listaExtra.push(nombre);
+    saveConfigLocal();
+    if (supa) cloudSaveConfig().catch(() => {});
+  }
+  poblarSelect(select, getFullList(), { conBlanco, valorActual: nombre });
+}
+$("categoria").addEventListener("change", () => {
+  agregarPersonalizado($("categoria"), config.categoriasExtra, getCategorias, false, "categoría");
+});
+$("medio").addEventListener("change", () => {
+  agregarPersonalizado($("medio"), config.mediosPago, getMedios, true, "medio de pago");
+});
+
 /* presupuesto y configuración de sueldo/ahorro */
 $("btnConfig").addEventListener("click", () => {
   const panel = $("panelConfig");
@@ -899,12 +983,23 @@ $("fileImport").addEventListener("change", async (e) => {
     if (!Array.isArray(arr)) throw new Error("formato inválido");
     const ids = new Set(gastos.map(g => g.id));
     let nuevos = 0;
+    let categoriasNuevas = false;
     for (const r of arr) {
       if (!r || !r.fecha || !r.categoria || !(Number(r.monto) > 0)) continue;
+      const existente = getCategorias().find(c => c.toLowerCase() === String(r.categoria).toLowerCase());
+      let categoria = existente;
+      if (!categoria) {
+        categoria = String(r.categoria).trim() || "Otros";
+        if (!config.categoriasExtra.some(c => c.toLowerCase() === categoria.toLowerCase())) {
+          config.categoriasExtra.push(categoria);
+          categoriasNuevas = true;
+        }
+      }
       const g = {
         id: r.id && !ids.has(r.id) ? r.id : (ids.has(r.id) ? null : uuid()),
         fecha: String(r.fecha).slice(0, 10),
-        categoria: CATEGORIAS.includes(r.categoria) ? r.categoria : "Otros",
+        categoria,
+        medio: r.medio ? String(r.medio).slice(0, 60) : "",
         detalle: String(r.detalle || "").slice(0, 120),
         monto: Math.round(Number(r.monto)),
         compartido: !!r.compartido
@@ -918,6 +1013,11 @@ $("fileImport").addEventListener("change", async (e) => {
       if (supa) cloudInsert(g)
         .then(() => { delete g.dirty; saveLocal(); updatePill(); })
         .catch(() => enqueue({ t: "add", g }));
+    }
+    if (categoriasNuevas) {
+      saveConfigLocal();
+      if (supa) cloudSaveConfig().catch(() => {});
+      poblarSelect($("categoria"), getCategorias());
     }
     saveLocal();
     render();
@@ -933,15 +1033,11 @@ window.addEventListener("offline", () => updatePill());
 
 /* ---------- init ---------- */
 (function init() {
-  const sel = $("categoria");
-  for (const c of CATEGORIAS) {
-    const o = document.createElement("option");
-    o.value = o.textContent = c;
-    sel.appendChild(o);
-  }
+  loadConfigLocal();
+  poblarSelect($("categoria"), getCategorias());
+  poblarSelect($("medio"), getMedios(), { conBlanco: true });
   $("fecha").value = hoyISO();
   loadLocal();
-  loadConfigLocal();
   updateFiltroUI();
   render();
   updatePill();

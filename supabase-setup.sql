@@ -39,3 +39,10 @@ create policy "acceso total autenticado config"
   to authenticated
   using (true)
   with check (true);
+
+-- Medio de pago (etiqueta libre: CMR, Santander Visa, Cuenta Vista, Efectivo, etc.)
+alter table public.gastos add column if not exists medio text;
+
+-- Categorías y medios de pago personalizados (agregados desde la propia app).
+alter table public.config add column if not exists categorias_extra jsonb not null default '[]'::jsonb;
+alter table public.config add column if not exists medios_pago jsonb not null default '[]'::jsonb;
